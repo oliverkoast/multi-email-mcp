@@ -90,11 +90,79 @@ server.registerTool(
   "list_accounts",
   {
     title: "List configured accounts",
-    description: "List the configured mail accounts (id, email, provider) this server can read.",
+    description: "List the configured mail accounts (id, email, provider, access) this server can read.",
     inputSchema: {},
   },
-  async () => json(accounts.map(({ id, email, provider }) => ({ id, email, provider })))
+  async () =>
+    json(
+      accounts.map(({ id, email, provider, write }) => ({
+        id,
+        email,
+        provider,
+        access: write ? "read + create drafts (no send)" : "read-only",
+      }))
+    )
 );
+
+// Draft tools are only registered when at least one account opts into write
+// access (MAIL_<ID>_WRITE=true) — a fully read-only setup exposes a fully
+// read-only tool surface, same as before.
+const writeIds = accounts.filter((a) => a.write).map((a) => a.id);
+if (writeIds.length) {
+  const writeAccountParam = z
+    .string()
+    .describe(`Which account to create the draft in: one of ${writeIds.join(", ")}, or its email address (write-enabled accounts only; no "all")`);
+
+  const forDrafts = (selector) => {
+    if (!selector || selector === "all") {
+      throw new Error(`Draft tools need a specific account: one of ${writeIds.join(", ")}.`);
+    }
+    const [target] = resolveAccounts(accounts, selector);
+    if (!providerFor(target).createReplyDraft) {
+      throw new Error(`${target.id}: draft creation is only supported for Outlook accounts so far.`);
+    }
+    return target;
+  };
+
+  server.registerTool(
+    "create_reply_draft",
+    {
+      title: "Create reply draft",
+      description:
+        "Create a reply DRAFT in the account's Drafts folder, threaded to the original message with the quoted history included — exactly like hitting Reply in Outlook and typing. NEVER sends: the user reviews and sends from Outlook. `id` and `account` must come from search_mail/list_recent (ids are per-account).",
+      inputSchema: {
+        id: z.string().describe("Message id (from search_mail or list_recent) of the message to reply to"),
+        account: writeAccountParam,
+        comment: z.string().describe("The reply text (plain text; goes above the quoted original)"),
+        reply_all: z.boolean().default(false).describe("Reply to all recipients instead of only the sender"),
+      },
+    },
+    async ({ id, account, comment, reply_all }) => {
+      const target = forDrafts(account);
+      return json(await providerFor(target).createReplyDraft(target, id, { comment, replyAll: reply_all }));
+    }
+  );
+
+  server.registerTool(
+    "create_draft",
+    {
+      title: "Create new draft",
+      description:
+        "Create a fresh (non-reply) email DRAFT in the account's Drafts folder. NEVER sends: the user reviews and sends from Outlook.",
+      inputSchema: {
+        account: writeAccountParam,
+        to: z.array(z.string()).min(1).describe("Recipient email addresses"),
+        cc: z.array(z.string()).optional().describe("Cc email addresses"),
+        subject: z.string().describe("Subject line"),
+        body: z.string().describe("Plain-text body"),
+      },
+    },
+    async ({ account, to, cc, subject, body }) => {
+      const target = forDrafts(account);
+      return json(await providerFor(target).createDraft(target, { to, cc, subject, body }));
+    }
+  );
+}
 
 // Exit when the MCP client disconnects — lingering IMAP sockets would
 // otherwise keep the process alive after stdin closes.

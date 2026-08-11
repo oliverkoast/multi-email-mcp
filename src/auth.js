@@ -9,7 +9,7 @@ import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { loadAccounts, tokensDir } from "./config.js";
 import { GMAIL_SCOPE } from "./providers/gmail-api.js";
-import { makePca, MS_SCOPES } from "./providers/outlook-graph.js";
+import { makePca, scopesFor } from "./providers/outlook-graph.js";
 import { CryptoProvider } from "@azure/msal-node";
 
 // Fixed loopback port. Personal Microsoft accounts require an EXACT redirect
@@ -90,6 +90,8 @@ if (account.provider === "gmail-api") {
 
 if (account.provider === "outlook") {
   const pca = makePca(account);
+  const scopes = scopesFor(account);
+  const mode = account.write ? "read + create drafts (no send)" : "read-only";
   // Interactive loopback (auth-code + PKCE): opens the browser, captures the
   // result on http://localhost:<port>. More robust than device code for
   // personal Microsoft accounts (no code-entry race, no expiry window), and
@@ -101,7 +103,7 @@ if (account.provider === "outlook") {
   const { verifier, challenge } = await crypto.generatePkceCodes();
 
   const authUrl = await pca.getAuthCodeUrl({
-    scopes: MS_SCOPES,
+    scopes,
     redirectUri,
     codeChallenge: challenge,
     codeChallengeMethod: "S256",
@@ -117,7 +119,7 @@ if (account.provider === "outlook") {
     server.listen(MS_REDIRECT_PORT, "127.0.0.1", resolve);
   });
 
-  console.log(`\nSign in as ${account.email} (read-only mail). Opening your browser...`);
+  console.log(`\nSign in as ${account.email} (${mode} mail). Opening your browser...`);
   console.log(`\nIf it doesn't open, paste this URL into your browser:\n\n${authUrl}\n`);
   tryOpen(authUrl);
 
@@ -136,7 +138,7 @@ if (account.provider === "outlook") {
   server.close();
 
   const result = await pca.acquireTokenByCode({
-    scopes: MS_SCOPES,
+    scopes,
     redirectUri,
     code,
     codeVerifier: verifier,

@@ -1,5 +1,7 @@
-// Microsoft 365 / Outlook provider via Microsoft Graph (delegated Mail.Read).
-// Auth is a one-time device-code sign-in (`npm run auth <id>`); MSAL's token
+// Microsoft 365 / Outlook provider via Microsoft Graph (delegated Mail.Read,
+// or Mail.ReadWrite for write-enabled accounts — write means creating drafts
+// only; there is deliberately no send path anywhere in this module).
+// Auth is a one-time browser sign-in (`npm run auth <id>`); MSAL's token
 // cache is persisted to tokens/<id>.json and refreshed silently from then on.
 // Search uses KQL (`from:`, `subject:`, `hasAttachments:true`, ...).
 
@@ -8,7 +10,9 @@ import fs from "node:fs";
 import { msOAuthConfig } from "../config.js";
 
 const GRAPH = "https://graph.microsoft.com/v1.0";
-export const MS_SCOPES = ["Mail.Read"];
+// Mail.ReadWrite is a superset of Mail.Read (read + create/edit drafts). It
+// does NOT include sending — that would be Mail.Send, which we never request.
+export const scopesFor = (account) => [account.write ? "Mail.ReadWrite" : "Mail.Read"];
 
 export function cachePlugin(file) {
   return {
@@ -22,7 +26,7 @@ export function cachePlugin(file) {
 }
 
 export function makePca(account) {
-  const { clientId, tenant } = msOAuthConfig();
+  const { clientId, tenant } = msOAuthConfig(account);
   return new PublicClientApplication({
     auth: { clientId, authority: `https://login.microsoftonline.com/${tenant}` },
     cache: { cachePlugin: cachePlugin(account.tokenFile) },
@@ -41,11 +45,12 @@ async function getToken(account) {
     throw new Error(`${account.id}: token cache is empty — run: npm run auth ${account.id}`);
   }
   try {
-    const result = await pca.acquireTokenSilent({ account: cached[0], scopes: MS_SCOPES });
+    const result = await pca.acquireTokenSilent({ account: cached[0], scopes: scopesFor(account) });
     return result.accessToken;
   } catch {
     throw new Error(
-      `${account.id}: token refresh failed (expired or revoked) — run: npm run auth ${account.id}`
+      `${account.id}: token refresh failed (expired, revoked, or the cached token predates a ` +
+        `scope change like enabling MAIL_${account.id.toUpperCase()}_WRITE) — run: npm run auth ${account.id}`
     );
   }
 }
@@ -137,5 +142,86 @@ export async function readMessage(account, id) {
 export async function checkAccount(account) {
   const token = await getToken(account);
   const inbox = await graph(token, "/me/mailFolders/inbox?$select=totalItemCount");
-  return `${account.email} — ${inbox.totalItemCount} messages in Inbox (Microsoft Graph)`;
+  const mode = account.write ? "read + drafts" : "read-only";
+  return `${account.email} — ${inbox.totalItemCount} messages in Inbox (Microsoft Graph, ${mode})`;
+}
+
+// --- Draft creation (write-enabled accounts only; never sends) ------------
+
+async function graphWrite(token, method, path, payload) {
+  const res = await fetch(`${GRAPH}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: payload === undefined ? undefined : JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Graph ${res.status}: ${body.slice(0, 300)}`);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+function assertWritable(account) {
+  if (!account.write) {
+    throw new Error(
+      `${account.id} (${account.email}) is read-only. To enable draft creation: set ` +
+        `MAIL_${account.id.toUpperCase()}_WRITE=true in .env, make sure the app registration ` +
+        `declares Mail.ReadWrite (delegated), and re-run: npm run auth ${account.id}`
+    );
+  }
+}
+
+// Graph's createReply `comment` lands inside an HTML body, so escape and
+// convert newlines or plain-text formatting is lost.
+function asHtmlComment(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\n/g, "<br>\n");
+}
+
+export async function createReplyDraft(account, id, { comment, replyAll = false }) {
+  assertWritable(account);
+  const token = await getToken(account);
+  // createReply/createReplyAll makes a draft in Drafts, threaded to the
+  // original, with the quoted history below the comment — same as hitting
+  // Reply in Outlook and typing. Nothing is sent (that would need Mail.Send).
+  const action = replyAll ? "createReplyAll" : "createReply";
+  const draft = await graphWrite(token, "POST", `/me/messages/${encodeURIComponent(id)}/${action}`, {
+    comment: asHtmlComment(comment),
+  });
+  return {
+    account: account.id,
+    account_email: account.email,
+    draft_id: draft.id,
+    subject: draft.subject || "(no subject)",
+    to: (draft.toRecipients || []).map(addr).join(", "),
+    cc: (draft.ccRecipients || []).map(addr).join(", "),
+    saved_to: "Drafts",
+    sent: false,
+    note: "Draft created in the Drafts folder, threaded to the original. Nothing was sent — review and send it from Outlook.",
+  };
+}
+
+export async function createDraft(account, { to, cc, subject, body }) {
+  assertWritable(account);
+  const token = await getToken(account);
+  const recipients = (list) => (list || []).map((address) => ({ emailAddress: { address } }));
+  const draft = await graphWrite(token, "POST", "/me/messages", {
+    subject,
+    body: { contentType: "Text", content: body },
+    toRecipients: recipients(to),
+    ...(cc?.length ? { ccRecipients: recipients(cc) } : {}),
+  });
+  return {
+    account: account.id,
+    account_email: account.email,
+    draft_id: draft.id,
+    subject: draft.subject || "(no subject)",
+    to: (draft.toRecipients || []).map(addr).join(", "),
+    saved_to: "Drafts",
+    sent: false,
+    note: "Draft created in the Drafts folder. Nothing was sent — review and send it from Outlook.",
+  };
 }

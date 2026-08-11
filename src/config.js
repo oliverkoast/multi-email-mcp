@@ -49,6 +49,7 @@ export function loadAccounts() {
     const provider = (envFor(id, "PROVIDER") || "gmail").toLowerCase();
     const email = envFor(id, "EMAIL");
     const password = (envFor(id, "APP_PASSWORD") || "").replace(/\s+/g, "");
+    const write = /^(1|true|yes)$/i.test(envFor(id, "WRITE") || "");
 
     if (!PROVIDERS.includes(provider)) {
       problems.push(`${id}: unknown provider "${provider}" (use ${PROVIDERS.join(" | ")})`);
@@ -57,7 +58,22 @@ export function loadAccounts() {
     if (provider === "gmail" && !password) {
       problems.push(`${id}: missing MAIL_${id.toUpperCase()}_APP_PASSWORD (required for provider "gmail")`);
     }
-    return { id, provider, email, password, tokenFile: path.join(tokensDir, `${id}.json`) };
+    if (write && provider !== "outlook") {
+      problems.push(`${id}: MAIL_${id.toUpperCase()}_WRITE is only supported for provider "outlook"`);
+    }
+    return {
+      id,
+      provider,
+      email,
+      password,
+      write,
+      // Per-account Entra app override, so one write-enabled account can use
+      // a Mail.ReadWrite registration while the rest stay on the shared
+      // read-only one.
+      msClientId: envFor(id, "MS_CLIENT_ID"),
+      msTenant: envFor(id, "MS_TENANT"),
+      tokenFile: path.join(tokensDir, `${id}.json`),
+    };
   });
 
   if (problems.length) {
@@ -81,15 +97,15 @@ export function googleOAuthConfig() {
   return { clientId, clientSecret };
 }
 
-export function msOAuthConfig() {
-  const clientId = process.env.MS_CLIENT_ID;
+export function msOAuthConfig(account = {}) {
+  const clientId = account.msClientId || process.env.MS_CLIENT_ID;
   if (!clientId) {
     throw new Error(
       'Provider "outlook" needs MS_CLIENT_ID in .env (an Entra ID app registration ' +
         "with Mail.Read delegated permission — see CLIENT-SETUP.md)."
     );
   }
-  return { clientId, tenant: process.env.MS_TENANT || "common" };
+  return { clientId, tenant: account.msTenant || process.env.MS_TENANT || "common" };
 }
 
 export function resolveAccounts(accounts, selector) {
