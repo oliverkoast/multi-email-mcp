@@ -65,31 +65,44 @@ so a human still has to hit Send on every draft.
 
 Requirements:
 
-1. An app registration that declares **Mail.ReadWrite (delegated)**. Keep
-   this a *separate* registration from the read-only one so read-only
-   setups keep a read-only app (see consultant prerequisites below — same
-   steps, just Mail.ReadWrite instead of Mail.Read).
-2. In `.env`, on the account: `MAIL_<ID>_WRITE=true` and
-   `MAIL_<ID>_MS_CLIENT_ID=<the write registration's client ID>` (other
-   accounts keep using the global `MS_CLIENT_ID`).
-3. If the tenant requires admin consent, IT approves the write registration
+1. An app registration that declares **Mail.ReadWrite (delegated)**. Two
+   ways to get one:
+   - **Add the scope to the existing registration** (API permissions → Add
+     → Microsoft Graph → Delegated → Mail.ReadWrite). Simplest when the
+     registration serves one client. Read-only accounts are unaffected:
+     the code only ever *requests* Mail.ReadWrite for accounts with the
+     write flag, so their sign-ins and tokens stay Mail.Read.
+   - **A client-owned registration in the client's own tenant** — their IT
+     creates it (same steps as the consultant prerequisites below, with
+     Mail.ReadWrite instead of Mail.Read, single-tenant is fine) and owns
+     it outright: full audit, kill switch, no external app in the trust
+     chain. Point the account at it with
+     `MAIL_<ID>_MS_CLIENT_ID=<their client ID>` and
+     `MAIL_<ID>_MS_TENANT=<their tenant>`; other accounts keep using the
+     global `MS_CLIENT_ID`.
+2. In `.env`, on the account: `MAIL_<ID>_WRITE=true`.
+3. If the tenant requires admin consent, IT approves the write scope
    (template below).
 4. Re-run `npm run auth <id>` — the cached token was issued for Mail.Read
    and must be re-issued with the new scope.
 
 **Microsoft IT request (write lane):**
 
-> Subject: Approve a draft-creation mail app for <user@org.com>
+> Subject: Approve draft creation for the claude-mail app for <user@org.com>
 >
-> Please grant admin consent for the app registration `<RW_CLIENT_ID>`
-> ("claude-mail-rw") requesting only the delegated Microsoft Graph
-> permission `Mail.ReadWrite` (read the signed-in user's own mailbox and
-> create/edit drafts in it; no ability to send — that would be Mail.Send,
-> which the app does not request). To limit the grant to specific users,
-> set Enterprise applications → the app → Properties → "Assignment
-> required" = Yes and assign only them; delegated permissions only ever
-> reach mailboxes of users who sign in. Access is revocable anytime under
-> the user's My Apps or by removing the enterprise application.
+> Please grant admin consent for the app registration `<CLIENT_ID>`
+> ("claude-mail") for the delegated Microsoft Graph permission
+> `Mail.ReadWrite` (read the signed-in user's own mailbox and create/edit
+> drafts in it; no ability to send — that would be Mail.Send, which the
+> app does not request). To limit the grant to specific users, set
+> Enterprise applications → the app → Properties → "Assignment required"
+> = Yes and assign only them; delegated permissions only ever reach
+> mailboxes of users who sign in. Access is revocable anytime under the
+> user's My Apps or by removing the enterprise application. If you would
+> rather own the app outright, an alternative is to create the
+> registration in your own tenant (public client, delegated Mail.ReadWrite,
+> redirect URI http://localhost:3000, "allow public client flows" on) and
+> send back its client ID — everything else works the same.
 
 ## Verify + wire into Claude
 
