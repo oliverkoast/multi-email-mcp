@@ -135,6 +135,18 @@ claude mcp add --scope user mail -- node /ABSOLUTE/PATH/TO/multi-email-mcp/src/s
 Smoke test in Claude: *"Search all my accounts for `<keyword>` and show which
 account each result came from."*
 
+Attachment test for a Microsoft 365 account:
+
+> Find a recent email with a PDF attachment. Read the message, open the PDF
+> using `read_attachment`, and summarize it. Tell me the source account,
+> message subject, attachment name, and whether anything could not be read.
+> Do not create, modify, delete, or send anything.
+
+Opening a Microsoft 365 attachment stays within the delegated `Mail.Read`
+permission. The tool can open ordinary binary file attachments up to 7 MB and text attachments up to 1 MB. Attached
+Outlook items and cloud-reference attachments are identified but not opened;
+Gmail attachment retrieval is not implemented yet.
+
 ## IT request templates
 
 **Google IT request** (org restricts third-party app access):

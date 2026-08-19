@@ -1,7 +1,7 @@
 // Provider dispatch: every provider module exposes the same read surface
 // (searchMail, listRecent, readMessage, checkAccount) over the same
 // normalized result shape, so the MCP tools don't care what's behind an
-// account. Providers may additionally expose draft creation
+// account. Providers may additionally expose attachment reading and draft creation
 // (createReplyDraft, createDraft) for write-enabled accounts — currently
 // outlook only. No provider has a send path.
 

@@ -8,6 +8,12 @@
 import { PublicClientApplication } from "@azure/msal-node";
 import fs from "node:fs";
 import { msOAuthConfig } from "../config.js";
+import { maxAttachmentBytesForContentType } from "../attachment-result.js";
+import {
+  assertOutlookAttachmentSize,
+  decodeOutlookAttachment,
+  outlookAttachmentSummary,
+} from "./outlook-attachment.js";
 
 const GRAPH = "https://graph.microsoft.com/v1.0";
 // Mail.ReadWrite is a superset of Mail.Read (read + create/edit drafts). It
@@ -117,13 +123,9 @@ export async function readMessage(account, id) {
   if (msg.hasAttachments) {
     const att = await graph(
       token,
-      `/me/messages/${encodeURIComponent(id)}/attachments?$select=name,contentType,size`
+      `/me/messages/${encodeURIComponent(id)}/attachments?$select=id,name,contentType,size,isInline`
     );
-    attachments = (att.value || []).map((a) => ({
-      filename: a.name,
-      contentType: a.contentType,
-      size: a.size,
-    }));
+    attachments = (att.value || []).map(outlookAttachmentSummary);
   }
   return {
     account: account.id,
@@ -136,6 +138,21 @@ export async function readMessage(account, id) {
     date: msg.receivedDateTime || null,
     body: msg.body?.content || "",
     attachments,
+  };
+}
+
+export async function readAttachment(account, messageId, attachmentId) {
+  const token = await getToken(account);
+  const path = `/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`;
+  // Fetch metadata without contentBytes first. This prevents a large base64
+  // payload from entering memory before the safety limit can be enforced.
+  const metadata = await graph(token, `${path}?$select=id,name,contentType,size`);
+  assertOutlookAttachmentSize(metadata, maxAttachmentBytesForContentType(metadata.contentType));
+  const attachment = await graph(token, path);
+  return {
+    account: account.id,
+    messageId,
+    ...decodeOutlookAttachment(attachment),
   };
 }
 

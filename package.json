@@ -1,13 +1,14 @@
 {
   "name": "multi-email-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local MCP server exposing unified read-only access to multiple email accounts (Gmail + Outlook) from one connection",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "check": "node src/check.js",
-    "auth": "node src/auth.js"
+    "auth": "node src/auth.js",
+    "test": "node --test"
   },
   "license": "MIT",
   "dependencies": {

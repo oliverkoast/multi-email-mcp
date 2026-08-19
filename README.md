@@ -33,13 +33,25 @@ IMAP auth was retired in 2022–2024), so Outlook accounts always use Graph.
 | Tool | Params | Returns |
 |---|---|---|
 | `search_mail` | `query`, `account` (id / email / `"all"`), `limit` | subject, sender, date, snippet per match, labeled by account |
-| `read_message` | `id`, `account` (specific — ids are per-account) | full body + headers + attachment list |
+| `read_message` | `id`, `account` (specific — ids are per-account) | full body + headers + attachment list, including attachment ids |
+| `read_attachment` | `message_id`, `attachment_id`, `account` | opens a Microsoft 365 attachment as an embedded read-only resource |
 | `list_recent` | `account`, `limit` | newest messages first |
 | `list_accounts` | — | configured account ids + emails + providers |
 
 `account: "all"` fans out to every account in parallel and merges results
 newest-first; a failing account comes back as an `errors` entry instead of
 failing the call. Result shape is identical across providers.
+
+### Reading attachments
+
+For a Microsoft 365 message, call `read_message` first, then pass the returned
+message id, attachment id, and account to `read_attachment`. Text attachments
+are returned as text; other files are returned as MCP embedded resources.
+PDFs and images are the primary binary targets; whether Claude can interpret
+other formats depends on the Claude client. The tool uses only
+Microsoft Graph `Mail.Read`, so opening an attachment does not grant send,
+delete, or modify access. Binary attachments over 7 MB and text attachments over 1 MB are rejected to protect the
+model context. Gmail attachment retrieval is not implemented yet.
 
 ## Setup
 

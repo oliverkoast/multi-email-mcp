@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// MCP server (stdio) exposing unified read-only Gmail access across every
+// MCP server (stdio) exposing unified read-only mail access across every
 // account listed in .env. Tools take an `account` param: an account id,
 // an email address, or "all" to fan out and merge.
 
@@ -8,11 +8,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { loadAccounts, resolveAccounts } from "./config.js";
 import { providerFor } from "./provider.js";
+import { attachmentToolResult } from "./attachment-result.js";
 
 const accounts = loadAccounts();
 const accountIds = accounts.map((a) => a.id);
 
-const server = new McpServer({ name: "gmail-multi", version: "0.1.0" });
+const server = new McpServer({ name: "mail-multi", version: "0.2.0" });
 
 function json(data) {
   return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
@@ -69,6 +70,38 @@ server.registerTool(
     if (account === "all") throw new Error("read_message needs a specific account (ids are per-account).");
     const [target] = resolveAccounts(accounts, account);
     return json(await providerFor(target).readMessage(target, id));
+  }
+);
+
+server.registerTool(
+  "read_attachment",
+  {
+    title: "Read email attachment",
+    description:
+      "Open one attachment from an email without modifying the mailbox. First call read_message and use the returned attachment id. Returns text directly for text files and other files as embedded read-only resources. PDFs and images are the primary binary targets; interpretation of other formats depends on the Claude client. Microsoft 365 attachments are supported; other providers report a clear unsupported-provider error.",
+    inputSchema: {
+      message_id: z.string().describe("Message id from search_mail/list_recent/read_message"),
+      attachment_id: z.string().describe("Attachment id returned by read_message"),
+      account: z.string().describe(`The specific account the message belongs to: one of ${accountIds.join(", ")}, or its email address`),
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  async ({ message_id, attachment_id, account }) => {
+    if (!account || account === "all") {
+      throw new Error("read_attachment needs the specific account the message came from.");
+    }
+    const [target] = resolveAccounts(accounts, account);
+    const provider = providerFor(target);
+    if (!provider.readAttachment) {
+      throw new Error(`${target.id}: opening attachments is not supported for provider ${target.provider} yet.`);
+    }
+    const attachment = await provider.readAttachment(target, message_id, attachment_id);
+    return attachmentToolResult(attachment);
   }
 );
 
