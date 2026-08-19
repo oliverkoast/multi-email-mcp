@@ -22,7 +22,7 @@ export function outlookAttachmentSummary(attachment) {
 }
 
 export function decodeOutlookAttachment(attachment) {
-  if (!attachment.contentBytes) {
+  if (typeof attachment.contentBytes !== "string") {
     throw new Error(
       `${attachment.name || "This attachment"} does not expose file content. Attached messages and cloud-reference attachments are not supported yet.`
     );

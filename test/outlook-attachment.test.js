@@ -68,3 +68,15 @@ test("rejects Microsoft attachments with no trustworthy preflight size", () => {
     /size is unavailable/i
   );
 });
+
+test("accepts valid zero-byte Microsoft file attachments", () => {
+  const result = decodeOutlookAttachment({
+    id: "empty",
+    name: "empty.txt",
+    contentType: "text/plain",
+    size: 0,
+    contentBytes: "",
+  });
+
+  assert.equal(result.content.length, 0);
+});
