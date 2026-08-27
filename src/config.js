@@ -21,6 +21,7 @@
 
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
+import os from "node:os";
 import path from "node:path";
 
 export const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -95,6 +96,15 @@ export function googleOAuthConfig() {
     );
   }
   return { clientId, clientSecret };
+}
+
+// Where save_attachment writes. Point this at a synced Drive folder and saved
+// contracts land in the Drive with no Drive API involved; leave it unset and
+// they land in ~/Downloads.
+export function attachmentRoot(env = process.env) {
+  const dir = (env.MAIL_ATTACHMENT_DIR || "").trim();
+  if (!dir) return path.join(os.homedir(), "Downloads");
+  return dir.startsWith("~") ? path.join(os.homedir(), dir.slice(1)) : path.resolve(dir);
 }
 
 export function msOAuthConfig(account = {}) {

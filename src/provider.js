@@ -1,8 +1,9 @@
 // Provider dispatch: every provider module exposes the same read surface
 // (searchMail, listRecent, readMessage, checkAccount) over the same
 // normalized result shape, so the MCP tools don't care what's behind an
-// account. Providers may additionally expose attachment reading and draft creation
-// (createReplyDraft, createDraft) for write-enabled accounts — currently
+// account. Providers may additionally expose attachment reading and saving
+// (readAttachment, downloadAttachment), and draft creation (createReplyDraft,
+// createDraft, createForwardDraft) for write-enabled accounts — currently
 // outlook only. No provider has a send path.
 
 import * as gmailImap from "./providers/gmail-imap.js";

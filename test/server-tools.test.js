@@ -36,3 +36,56 @@ test("advertises read_attachment as a read-only MCP tool", async () => {
     await client.close();
   }
 });
+
+async function listToolsWith(env) {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(root, "src/server.js")],
+    cwd: root,
+    env: {
+      ...process.env,
+      MAIL_ACCOUNTS: "test",
+      MAIL_TEST_PROVIDER: "outlook",
+      MAIL_TEST_EMAIL: "test@example.com",
+      MS_CLIENT_ID: "00000000-0000-0000-0000-000000000000",
+      MS_TENANT: "organizations",
+      ...env,
+    },
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "tool-surface-test", version: "1.0.0" });
+  try {
+    await client.connect(transport);
+    return (await client.listTools()).tools;
+  } finally {
+    await client.close();
+  }
+}
+
+test("advertises save_attachment on a read-only account", async () => {
+  const tools = await listToolsWith({});
+  const save = tools.find((tool) => tool.name === "save_attachment");
+  assert.ok(save, "save_attachment should be listed without any write flag");
+  assert.equal(save.annotations?.destructiveHint, false);
+  assert.deepEqual(save.inputSchema.required?.sort(), ["account", "attachment_id", "message_id"]);
+});
+
+// Forwarding writes to the mailbox, so it must stay behind the same write flag
+// as the other draft tools rather than riding along with read-only access.
+test("hides create_forward_draft until an account opts into write access", async () => {
+  const readOnly = await listToolsWith({});
+  assert.equal(readOnly.find((tool) => tool.name === "create_forward_draft"), undefined);
+  assert.equal(readOnly.find((tool) => tool.name === "create_draft"), undefined);
+
+  const writable = await listToolsWith({ MAIL_TEST_WRITE: "true" });
+  const forward = writable.find((tool) => tool.name === "create_forward_draft");
+  assert.ok(forward, "create_forward_draft should appear once MAIL_TEST_WRITE=true");
+  assert.deepEqual(forward.inputSchema.required?.sort(), ["account", "id", "to"]);
+});
+
+// The whole point of the draft lane: no tool anywhere may claim to send.
+test("exposes no send tool even with write access enabled", async () => {
+  const tools = await listToolsWith({ MAIL_TEST_WRITE: "true" });
+  const senders = tools.filter((tool) => /send|forward_mail|deliver/i.test(tool.name));
+  assert.deepEqual(senders, []);
+});

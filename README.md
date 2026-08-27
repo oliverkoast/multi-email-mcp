@@ -35,6 +35,7 @@ IMAP auth was retired in 2022–2024), so Outlook accounts always use Graph.
 | `search_mail` | `query`, `account` (id / email / `"all"`), `limit` | subject, sender, date, snippet per match, labeled by account |
 | `read_message` | `id`, `account` (specific — ids are per-account) | full body + headers + attachment list, including attachment ids |
 | `read_attachment` | `message_id`, `attachment_id`, `account` | opens a Microsoft 365 attachment as an embedded read-only resource |
+| `save_attachment` | `message_id`, `attachment_id`, `account`, `subfolder?`, `filename?` | writes the attachment to a folder on disk and returns the path |
 | `list_recent` | `account`, `limit` | newest messages first |
 | `list_accounts` | — | configured account ids + emails + providers |
 
@@ -52,6 +53,41 @@ other formats depends on the Claude client. The tool uses only
 Microsoft Graph `Mail.Read`, so opening an attachment does not grant send,
 delete, or modify access. Binary attachments over 7 MB and text attachments over 1 MB are rejected to protect the
 model context. Gmail attachment retrieval is not implemented yet.
+
+### Saving attachments to a folder
+
+`read_attachment` opens a file *in the conversation*; `save_attachment` writes
+it *to disk* and returns the path. Use the second when the user wants the file
+itself. Both stay inside delegated `Mail.Read` and neither changes the mailbox.
+
+Set `MAIL_ATTACHMENT_DIR` to the save root (defaults to `~/Downloads`). Point
+it at a locally-synced Drive folder and saved files land in the Drive with no
+Drive API involved. The optional `subfolder` argument organises below that root
+and is resolved and bounds-checked, so a caller cannot write outside it, and an
+existing file is never overwritten (a numbered suffix is added instead).
+
+Because saved bytes never enter the conversation, saving is not bound by the
+7 MB inline-read cap. Its own ceiling is `MAIL_MAX_ATTACHMENT_SAVE_MB`
+(default 50), which is what makes large scanned contracts workable.
+
+### Draft tools (write-enabled Outlook accounts only)
+
+Registered only when an account sets `MAIL_<ID>_WRITE=true`, which is also the
+only case where `Mail.ReadWrite` is requested instead of `Mail.Read`. A
+read-only setup exposes a read-only tool surface.
+
+| Tool | Params | Returns |
+|---|---|---|
+| `create_reply_draft` | `id`, `account`, `comment`, `reply_all` | threaded reply draft in Drafts |
+| `create_forward_draft` | `id`, `account`, `to`, `comment?` | forward draft in Drafts, **original attachments carried over**, plus the list of files that rode along |
+| `create_draft` | `account`, `to`, `cc?`, `subject`, `body` | fresh draft in Drafts |
+
+`create_forward_draft` is the supported way to get a file out of the mailbox to
+someone else: Microsoft Graph's `createForward` copies the attachments onto the
+draft server-side, so nothing is downloaded and re-uploaded.
+
+**There is no send path.** `Mail.Send` is never requested and no tool sends.
+Every draft lands in Drafts for a human to review and send from Outlook.
 
 ## Setup
 

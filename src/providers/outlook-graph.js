@@ -9,6 +9,7 @@ import { PublicClientApplication } from "@azure/msal-node";
 import fs from "node:fs";
 import { msOAuthConfig } from "../config.js";
 import { maxAttachmentBytesForContentType } from "../attachment-result.js";
+import { assertSaveSize } from "../attachment-save.js";
 import {
   assertOutlookAttachmentSize,
   decodeOutlookAttachment,
@@ -156,6 +157,23 @@ export async function readAttachment(account, messageId, attachmentId) {
   };
 }
 
+// Same Graph call as readAttachment, but bounded by the save limit instead of
+// the context limit: bytes going to a folder never enter the conversation, so
+// a scanned contract too big to open inline still saves fine. Read-only —
+// this stays inside delegated Mail.Read.
+export async function downloadAttachment(account, messageId, attachmentId, { maxBytes }) {
+  const token = await getToken(account);
+  const path = `/me/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`;
+  const metadata = await graph(token, `${path}?$select=id,name,contentType,size`);
+  assertSaveSize(metadata.size, metadata.name, maxBytes);
+  const attachment = await graph(token, path);
+  return {
+    account: account.id,
+    messageId,
+    ...decodeOutlookAttachment(attachment),
+  };
+}
+
 export async function checkAccount(account) {
   const token = await getToken(account);
   const inbox = await graph(token, "/me/mailFolders/inbox?$select=totalItemCount");
@@ -218,6 +236,45 @@ export async function createReplyDraft(account, id, { comment, replyAll = false 
     saved_to: "Drafts",
     sent: false,
     note: "Draft created in the Drafts folder, threaded to the original. Nothing was sent — review and send it from Outlook.",
+  };
+}
+
+// createForward is the only path that moves an attachment out of the mailbox
+// without ever downloading and re-uploading it: Graph copies the original
+// attachments onto the draft server-side. Still a draft, so sending remains a
+// human action in Outlook and Mail.Send is never requested.
+export async function createForwardDraft(account, id, { comment, to }) {
+  assertWritable(account);
+  const token = await getToken(account);
+  const draft = await graphWrite(token, "POST", `/me/messages/${encodeURIComponent(id)}/createForward`, {
+    comment: asHtmlComment(comment || ""),
+    toRecipients: (to || []).map((address) => ({ emailAddress: { address } })),
+  });
+
+  // Confirm what actually rode along. For a forwarded contract, "did the PDF
+  // come with it" is the whole question, so report names rather than a flag.
+  let attachments = [];
+  try {
+    const listed = await graph(
+      token,
+      `/me/messages/${encodeURIComponent(draft.id)}/attachments?$select=id,name,contentType,size`
+    );
+    attachments = (listed.value || []).map((a) => ({ filename: a.name, size: a.size }));
+  } catch {
+    attachments = null; // listing failed; the draft itself is still fine
+  }
+
+  return {
+    account: account.id,
+    account_email: account.email,
+    draft_id: draft.id,
+    subject: draft.subject || "(no subject)",
+    to: (draft.toRecipients || []).map(addr).join(", "),
+    saved_to: "Drafts",
+    sent: false,
+    attachments_carried:
+      attachments === null ? "could not be listed; open the draft in Outlook to confirm" : attachments,
+    note: "Forward draft created in the Drafts folder with the original attachments copied over. Nothing was sent — review the recipient and send it from Outlook.",
   };
 }
 

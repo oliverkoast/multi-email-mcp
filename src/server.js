@@ -6,9 +6,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { loadAccounts, resolveAccounts } from "./config.js";
+import { loadAccounts, resolveAccounts, attachmentRoot } from "./config.js";
 import { providerFor } from "./provider.js";
 import { attachmentToolResult } from "./attachment-result.js";
+import { saveAttachmentToDisk, maxSaveBytes } from "./attachment-save.js";
 
 const accounts = loadAccounts();
 const accountIds = accounts.map((a) => a.id);
@@ -106,6 +107,60 @@ server.registerTool(
 );
 
 server.registerTool(
+  "save_attachment",
+  {
+    title: "Save email attachment to a folder",
+    description:
+      "Save one attachment from an email to a folder on this machine, so it becomes a real file the user can open, keep, or sync. Use this instead of read_attachment when the user wants the file itself (\"download it\", \"save it\", \"put it in the Drive\") rather than wanting its contents summarized. First call read_message and use the returned attachment id. Read-only with respect to the mailbox: nothing in the mailbox is changed, sent, or deleted. Handles files far larger than read_attachment can open, since the bytes go to disk rather than into the conversation.",
+    inputSchema: {
+      message_id: z.string().describe("Message id from search_mail/list_recent/read_message"),
+      attachment_id: z.string().describe("Attachment id returned by read_message"),
+      account: z.string().describe(`The specific account the message belongs to: one of ${accountIds.join(", ")}, or its email address`),
+      subfolder: z
+        .string()
+        .optional()
+        .describe('Optional folder path under the configured save directory, e.g. "JCole_Tour/Contracts". Created if missing. Cannot escape the save directory.'),
+      filename: z
+        .string()
+        .optional()
+        .describe("Optional filename override. Defaults to the attachment's own name. An existing file is never overwritten; a numbered suffix is added instead."),
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+  },
+  async ({ message_id, attachment_id, account, subfolder, filename }) => {
+    if (!account || account === "all") {
+      throw new Error("save_attachment needs the specific account the message came from.");
+    }
+    const [target] = resolveAccounts(accounts, account);
+    const provider = providerFor(target);
+    if (!provider.downloadAttachment) {
+      throw new Error(`${target.id}: saving attachments is not supported for provider ${target.provider} yet.`);
+    }
+    const attachment = await provider.downloadAttachment(target, message_id, attachment_id, {
+      maxBytes: maxSaveBytes(),
+    });
+    const saved = await saveAttachmentToDisk(attachment, {
+      root: attachmentRoot(),
+      subfolder,
+      filename,
+    });
+    return json({
+      account: target.id,
+      account_email: target.email,
+      message_id,
+      attachment_id,
+      ...saved,
+      mailbox_modified: false,
+    });
+  }
+);
+
+server.registerTool(
   "list_recent",
   {
     title: "List recent mail",
@@ -193,6 +248,28 @@ if (writeIds.length) {
     async ({ account, to, cc, subject, body }) => {
       const target = forDrafts(account);
       return json(await providerFor(target).createDraft(target, { to, cc, subject, body }));
+    }
+  );
+
+  server.registerTool(
+    "create_forward_draft",
+    {
+      title: "Create forward draft (keeps attachments)",
+      description:
+        "Forward an email, WITH its original attachments, as a DRAFT in the account's Drafts folder. This is how to get a file out of the mailbox to someone else: Microsoft copies the attachments onto the draft server-side, so nothing is downloaded and re-uploaded. NEVER sends: the user reviews the recipient and hits Send in Outlook. `id` and `account` must come from search_mail/list_recent (ids are per-account).",
+      inputSchema: {
+        id: z.string().describe("Message id (from search_mail or list_recent) of the message to forward"),
+        account: writeAccountParam,
+        to: z.array(z.string()).min(1).describe("Recipient email addresses to forward to"),
+        comment: z.string().default("").describe("Optional note to place above the forwarded message"),
+      },
+    },
+    async ({ id, account, to, comment }) => {
+      const target = forDrafts(account);
+      if (!providerFor(target).createForwardDraft) {
+        throw new Error(`${target.id}: forward drafts are only supported for Outlook accounts so far.`);
+      }
+      return json(await providerFor(target).createForwardDraft(target, id, { comment, to }));
     }
   );
 }

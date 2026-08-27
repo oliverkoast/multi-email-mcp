@@ -59,9 +59,19 @@ One-time browser sign-in with the **Mail.Read** (read-only) permission.
 
 By default every account is read-only. An Outlook account can additionally
 opt into **draft creation**: Claude can then drop reply drafts (threaded,
-with quoted history) or fresh drafts into the Drafts folder. Sending stays
-impossible — the code never requests Mail.Send and contains no send path,
-so a human still has to hit Send on every draft.
+with quoted history), **forward drafts that keep the original attachments**,
+or fresh drafts into the Drafts folder. Sending stays impossible — the code
+never requests Mail.Send and contains no send path, so a human still has to
+hit Send on every draft.
+
+Forwarding is the supported way to pass a file from the mailbox to someone
+else. Graph's `createForward` copies the original attachments onto the draft
+server-side, so the file is never downloaded and re-uploaded, and the draft
+waits in Drafts until a person checks the recipient and sends it.
+
+To pull files *out* to a folder instead, no write access is needed at all:
+`save_attachment` works on a plain read-only account (see
+`MAIL_ATTACHMENT_DIR` in `.env.example`).
 
 Requirements:
 
@@ -93,7 +103,8 @@ Requirements:
 > Please grant admin consent for the app registration `<CLIENT_ID>`
 > ("claude-mail") for the delegated Microsoft Graph permission
 > `Mail.ReadWrite` (read the signed-in user's own mailbox and create/edit
-> drafts in it; no ability to send — that would be Mail.Send, which the
+> drafts in it, including forward drafts that retain the original
+> attachments; no ability to send — that would be Mail.Send, which the
 > app does not request). To limit the grant to specific users, set
 > Enterprise applications → the app → Properties → "Assignment required"
 > = Yes and assign only them; delegated permissions only ever reach
